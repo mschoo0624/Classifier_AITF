@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Space+Mono&display=swap');
+
+:root { font-family: 'IBM Plex Sans KR', sans-serif; }
+body { margin: 0; background: #eceff1; }
+.num { font-variant-numeric: tabular-nums; font-family: 'Space Mono', monospace; }

@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>예비군 훈련 부과 규칙</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: {
+      ink:{900:'#14181d',700:'#39434d',500:'#616d78',300:'#98a3ad'},
+      line:{DEFAULT:'#d3d9de',dark:'#aab3bc'},
+      pine:'#2c4a38', clay:'#8d3a2f', ochre:'#8a6116', steel:'#3c5170',
+    },
+    fontFamily:{ sans:['-apple-system','BlinkMacSystemFont','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR','sans-serif'] },
+  }}
+}
+</script>
+<style>
+  .num{font-variant-numeric:tabular-nums}
+  body{background:#eceff1}
+  table{border-collapse:collapse}
+</style>
+</head>
+<body class="font-sans text-ink-900 text-[14px] leading-relaxed">
+
+<header class="bg-white border-b border-line-dark">
+  <div class="max-w-6xl mx-auto px-6 py-3 flex items-baseline gap-6">
+    <h1 class="font-semibold text-[15px]">예비군 훈련 부과 규칙</h1>
+    <nav class="flex gap-1" id="tabs"></nav>
+    <span class="ml-auto text-[12.5px] text-ink-500 num" id="meta"></span>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-6 py-6" id="app">
+  <p class="text-ink-500">불러오는 중…</p>
+</main>
+
+<script>
+let D=null, tab='calc';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const TABS=[['calc','계산기'],['year','연차표'],['exempt','보류 규칙'],['postpone','연기 규칙'],['docs','서류 검토']];
+
+// 판정은 Python 이 미리 계산한 것을 조회만 합니다. JS 로 다시 구현하지 않습니다.
+const lookup = (ry,des,br,code,po) =>
+  D.combos.find(c=>c.key===`${ry}|${des?1:0}|${br}|${code||'-'}|${po?1:0}`);
+
+fetch('rules.json').then(r=>r.json()).then(d=>{D=d;init()})
+  .catch(e=>$('#app').innerHTML=
+    `<div class="bg-white border border-clay/30 rounded p-4">
+       <p class="font-semibold text-clay">rules.json 을 불러오지 못했습니다</p>
+       <p class="text-ink-500 mt-1">web 폴더에서 <code class="bg-ink-900/5 px-1">python3 -m http.server 8000</code> 실행 후
+       http://localhost:8000 으로 접속하세요.</p></div>`);
+
+function init(){
+  $('#meta').textContent = `${D.year}년 기준 · 판정일 ${D.as_of} · 훈련일 ${D.training_date}`;
+  $('#tabs').innerHTML = TABS.map(([k,v])=>
+    `<button data-t="${k}" class="px-3 py-1.5 text-[13.5px] border-b-2 border-transparent text-ink-500">${v}</button>`).join('');
+  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;render()});
+  render();
+}
+
+function render(){
+  $('#tabs').querySelectorAll('button').forEach(b=>{
+    const on=b.dataset.t===tab;
+    b.className=`px-3 py-1.5 text-[13.5px] border-b-2 ${on?'border-pine text-ink-900 font-semibold':'border-transparent text-ink-500'}`;
+  });
+  $('#app').innerHTML = ({calc:calcView,year:yearView,exempt:exemptView,postpone:postponeView,docs:docsView})[tab]();
+  if(tab==='calc') bindCalc();
+}
+
+const card = (title, sub, body) => `
+  <section class="bg-white border border-line rounded mb-5">
+    <div class="px-5 py-3 border-b border-line">
+      <h2 class="font-semibold">${esc(title)}</h2>
+      ${sub?`<p class="text-[12.5px] text-ink-500 mt-0.5">${sub}</p>`:''}
+    </div>
+    <div class="px-5 py-4">${body}</div>
+  </section>`;
+
+const th='text-left font-semibold text-[12.5px] text-ink-500 px-3 py-2 border-b border-line-dark bg-ink-900/[.03]';
+const td='px-3 py-2 border-b border-line align-top';
+
+// ─────────── 계산기 ───────────
+function calcView(){
+  const rules=D.exemption_rules.filter(r=>!r.handler);
+  return `
+  ${card('훈련 부과 계산기','아래 조건을 바꾸면 결과가 즉시 반영됩니다. 값은 Python 이 미리 계산한 792개 조합에서 조회합니다.',`
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+      <label class="block"><span class="block text-[12.5px] text-ink-500 mb-1">연차</span>
+        <select id="f-ry" class="w-full border border-line-dark rounded px-2 py-1.5 bg-white num">
+          ${[...Array(9).keys()].map(i=>`<option value="${i}" ${i===3?'selected':''}>${i}년차</option>`).join('')}
+        </select></label>
+      <label class="block"><span class="block text-[12.5px] text-ink-500 mb-1">동원지정</span>
+        <select id="f-des" class="w-full border border-line-dark rounded px-2 py-1.5 bg-white">
+          <option value="1" selected>지정</option><option value="0">미지정</option></select></label>
+      <label class="block"><span class="block text-[12.5px] text-ink-500 mb-1">군별</span>
+        <select id="f-br" class="w-full border border-line-dark rounded px-2 py-1.5 bg-white">
+          <option>육군</option><option>해군</option></select></label>
+      <label class="block col-span-2"><span class="block text-[12.5px] text-ink-500 mb-1">보류</span>
+        <select id="f-code" class="w-full border border-line-dark rounded px-2 py-1.5 bg-white">
+          <option value="">없음</option>
+          ${rules.map(r=>`<option value="${r.code}">${esc(r.kind)} · ${esc(r.name)}</option>`).join('')}
+        </select></label>
+    </div>
+    <label class="flex items-center gap-2 text-[13px] mb-5">
+      <input type="checkbox" id="f-po" class="rounded border-line-dark"> 연기 신청 승인됨 (시험 응시, 기한 내)
+    </label>
+    <div id="out"></div>`)}
+  ${card('상수','rules.py 에서 읽어온 값입니다.',
+    `<dl class="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-2 text-[13px]">
+      ${Object.entries(D.constants).map(([k,v])=>
+        `<div class="border-l-2 border-line pl-3">
+           <dt class="text-[12px] text-ink-500">${esc(k.replace(/_/g,' '))}</dt>
+           <dd class="num font-semibold">${v}</dd></div>`).join('')}
+    </dl>`)}`;
+}
+
+function bindCalc(){
+  const upd=()=>{
+    const c=lookup(+$('#f-ry').value, $('#f-des').value==='1', $('#f-br').value,
+                   $('#f-code').value, $('#f-po').checked);
+    if(!c){$('#out').innerHTML='<p class="text-ink-500">해당 조합 없음</p>';return}
+    const chip=(l,v,cls='')=>`<div class="border border-line rounded p-3">
+        <div class="text-[12px] text-ink-500">${l}</div>
+        <div class="font-semibold mt-0.5 ${cls}">${esc(v)}</div></div>`;
+    $('#out').innerHTML=`
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        ${chip('분류', c.label, c.label==='일반'?'text-ink-700':'text-pine')}
+        ${chip('동원훈련', c.mobilization)}
+        ${chip('교육훈련', c.training)}
+        ${chip('부과 시간', `${c.hours}시간${c.makeup?` + 보충 ${c.makeup}시간`:''}`)}
+      </div>
+      <div class="bg-ink-900/[.03] border border-line rounded p-4 mb-4 text-[13px]">
+        <div class="flex items-center gap-3 flex-wrap num">
+          <span class="text-ink-500">기본 부과</span>
+          <span class="font-semibold">${esc(c.base_training)} ${c.base_hours}시간</span>
+          <span class="text-ink-300">→</span>
+          <span class="text-ink-500">보류 적용</span>
+          <span class="font-semibold">${c.hours}시간</span>
+          ${c.makeup?`<span class="text-ink-300">→</span><span class="text-ink-500">연기·보충</span><span class="font-semibold">${c.makeup}시간</span>`:''}
+          <span class="text-ink-300">=</span>
+          <span class="font-semibold text-pine">합계 ${c.total}시간</span>
+        </div>
+      </div>
+      <div>
+        <h3 class="text-[12.5px] font-semibold text-ink-500 mb-2">판정 근거</h3>
+        <ol class="space-y-1 text-[13px]">
+          ${c.reasons.map(r=>`<li class="flex gap-2"><span class="text-ink-300">·</span><span>${esc(r)}</span></li>`).join('')}
+        </ol>
+        ${c.alerts.length?`<h3 class="text-[12.5px] font-semibold text-ochre mt-4 mb-2">알람</h3>
+          <ul class="space-y-1 text-[13px] text-ochre">${c.alerts.map(a=>`<li>! ${esc(a)}</li>`).join('')}</ul>`:''}
+      </div>`;
+  };
+  ['#f-ry','#f-des','#f-br','#f-code','#f-po'].forEach(s=>$(s).onchange=upd);
+  upd();
+}
+
+// ─────────── 연차표 ───────────
+function yearView(){
+  const rows=D.year_table.filter(r=>r.branch==='육군'||r.designated===false);
+  return card('연차별 기본 부과','보류·연기를 적용하기 전, 연차만으로 정해지는 값입니다. 전역 당해가 0년차입니다.',`
+    <table class="w-full text-[13px]">
+      <thead><tr><th class="${th}">연차</th><th class="${th}">동원지정</th><th class="${th}">군별</th>
+        <th class="${th}">훈련</th><th class="${th} text-right">시간</th></tr></thead>
+      <tbody>${D.year_table.map(r=>`<tr>
+        <td class="${td} num">${r.resource_year}년차</td>
+        <td class="${td}">${r.designated?'지정':'미지정'}</td>
+        <td class="${td}">${r.designated?'—':esc(r.branch)}</td>
+        <td class="${td}">${esc(r.training)}</td>
+        <td class="${td} num text-right font-semibold">${r.hours?r.hours+'h':'—'}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+    <p class="text-[12.5px] text-ink-500 mt-3">동원지정자는 군별과 무관하게 동원훈련 28시간입니다. 미지정자만 육군(출퇴근 4일)과 해·공군(2박3일 입영)이 갈립니다.</p>`);
+}
+
+// ─────────── 보류 규칙 ───────────
+function exemptView(){
+  const byKind={};
+  D.exemption_rules.forEach(r=>(byKind[r.kind]??=[]).push(r));
+  const note={'법규보류':'예비군법 제5조·시행령 제11조. 동원훈련 비대상이고 교육훈련도 면제됩니다.',
+              '방침보류':'동원훈련은 손실보충부대로 지정되고, 교육훈련은 대부분 8시간만 받습니다.',
+              '후순위조정':'병역법 제67조·시행령 제142조. 동원훈련만 빠지고 교육훈련은 그대로 받습니다 — 면제가 아닙니다.'};
+  return Object.entries(byKind).map(([kind,rs])=>card(kind, note[kind], `
+    <table class="w-full text-[13px]">
+      <thead><tr><th class="${th}">코드</th><th class="${th}">대상</th><th class="${th}">직업</th>
+        <th class="${th}">필요 서류</th><th class="${th}">동원훈련</th><th class="${th}">교육훈련</th>
+        <th class="${th} text-right">재확인</th></tr></thead>
+      <tbody>${rs.map(r=>`<tr>
+        <td class="${td} num text-ink-500">${esc(r.code)}</td>
+        <td class="${td} font-medium">${esc(r.name)}</td>
+        <td class="${td} text-ink-700">${r.occupations.length?esc(r.occupations.join(', ')):'<span class="text-ink-300">이력 기반</span>'}</td>
+        <td class="${td}">${esc(r.docs.join(', '))}</td>
+        <td class="${td}">${esc(r.mobilization)}</td>
+        <td class="${td} font-semibold">${r.education==='일부부과'?r.education_hours+'시간':esc(r.education)}</td>
+        <td class="${td} num text-right">${r.recheck_months}개월</td>
+      </tr>`).join('')}</tbody>
+    </table>`)).join('');
+}
+
+// ─────────── 연기 규칙 ───────────
+function postponeView(){
+  return `
+  ${card('숫자가 뜻하는 것','PostponementRule 의 인자 순서입니다.',`
+    <div class="bg-ink-900/[.04] border border-line rounded p-4 mb-4 overflow-x-auto">
+      <code class="text-[13px] whitespace-pre">PostponementRule("PO-ILLNESS", PostponeReason.ILLNESS, "질병·심신장애",
+                 (DocType.MEDICAL,), <span class="text-steel font-bold">0</span>, <span class="text-clay font-bold">5</span>, <span class="text-pine font-bold">90</span>)</code>
+    </div>
+    <dl class="space-y-3 text-[13px]">
+      <div class="flex gap-3"><dt class="w-32 shrink-0"><span class="text-steel font-bold num">0</span> apply_before</dt>
+        <dd class="text-ink-700">훈련일 기준 <b>며칠 전까지</b> 신청해야 하는가. 0이면 훈련일 당일까지 가능합니다.</dd></div>
+      <div class="flex gap-3"><dt class="w-32 shrink-0"><span class="text-clay font-bold num">5</span> retroactive</dt>
+        <dd class="text-ink-700">훈련일이 <b>지난 뒤 며칠까지</b> 사후 신청을 받아주는가. 0이면 사후 신청 불가입니다.
+        질병·사망·재난은 미리 신청할 수 없는 사유라 여기가 0이면 안 됩니다.</dd></div>
+      <div class="flex gap-3"><dt class="w-32 shrink-0"><span class="text-pine font-bold num">90</span> duration</dt>
+        <dd class="text-ink-700">연기 <b>효력이 며칠간</b> 유지되는가. 신청서에 기간을 적지 않았을 때 이 값으로 계산합니다.</dd></div>
+    </dl>`)}
+  ${card('연기 사유','네 관문(결재 승인 → 신청 기한 → 구비서류 → 효력기간)을 모두 통과해야 성립합니다.',`
+    <table class="w-full text-[13px]">
+      <thead><tr><th class="${th}">코드</th><th class="${th}">사유</th><th class="${th}">구비서류</th>
+        <th class="${th} text-right">사전 신청</th><th class="${th} text-right">사후 허용</th>
+        <th class="${th} text-right">효력 기간</th></tr></thead>
+      <tbody>${D.postponement_rules.map(r=>`<tr>
+        <td class="${td} num text-ink-500">${esc(r.code)}</td>
+        <td class="${td} font-medium">${esc(r.name)}</td>
+        <td class="${td}">${esc(r.docs.join(' / '))}</td>
+        <td class="${td} num text-right">${r.apply_before?r.apply_before+'일 전':'당일까지'}</td>
+        <td class="${td} num text-right ${r.retroactive?'font-semibold text-clay':'text-ink-300'}">${r.retroactive?r.retroactive+'일':'불가'}</td>
+        <td class="${td} num text-right">${r.duration}일</td>
+      </tr>`).join('')}</tbody>
+    </table>`)}
+  ${card('이수 결과와 이월','연기는 면제가 아니라 미루기입니다. 미이수분이 다음 해로 넘어갑니다.',`
+    <table class="w-full text-[13px] mb-3">
+      <thead><tr><th class="${th}">결과</th><th class="${th}">이월</th></tr></thead>
+      <tbody>${D.outcomes.map(o=>`<tr>
+        <td class="${td}">${esc(o.value)}</td>
+        <td class="${td} ${o.carries_over?'font-semibold':'text-ink-300'}">${o.carries_over?'이월됨':'이월 안 됨'}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+    <p class="text-[12.5px] text-ink-500">보류면제는 안 받아도 되는 훈련이라 이월되지 않습니다.
+    부과보다 많이 이수하면 초과분이 크레딧으로 넘어가 다음 해 부과를 줄입니다.</p>`)}`;
+}
+
+// ─────────── 서류 검토 ───────────
+function docsView(){
+  return `
+  ${card('반려 사유','사유를 고르면 예비군에게 나갈 안내 문구가 함께 발송됩니다.',`
+    <table class="w-full text-[13px]">
+      <thead><tr><th class="${th}">사유</th><th class="${th}">재제출</th><th class="${th}">안내 문구</th></tr></thead>
+      <tbody>${D.reject_reasons.map(r=>`<tr>
+        <td class="${td} font-medium whitespace-nowrap">${esc(r.label)}</td>
+        <td class="${td} whitespace-nowrap ${r.can_resubmit?'text-pine':'text-clay'}">${r.can_resubmit?'가능':'불가'}</td>
+        <td class="${td} text-ink-700">${esc(r.message)||'<span class="text-ink-300">실무자 직접 작성</span>'}</td>
+      </tr>`).join('')}</tbody>
+    </table>`)}
+  ${card('확인요청','반려와 다릅니다. 판정을 내리지 않고 발급기관 확인으로 넘깁니다.',`
+    <div class="flex flex-wrap gap-2 mb-3">
+      ${D.verify_reasons.map(v=>`<span class="border border-ochre/40 text-ochre rounded px-2.5 py-1 text-[13px]">${esc(v)}</span>`).join('')}
+    </div>
+    <p class="text-[12.5px] text-ink-500">위변조 의심은 반려가 아닙니다. 반려는 "다시 내세요"라는 종결 처분인데,
+    위변조는 확인이 필요하고 확인되면 고발까지 갈 수 있어 실무자가 혼자 판단할 일이 아닙니다.</p>`)}
+  ${card('서류 상태','승인된 서류만 판정에 반영됩니다.',`
+    <table class="w-full text-[13px]">
+      <thead><tr><th class="${th}">상태</th><th class="${th}">판정 반영</th><th class="${th}">의미</th></tr></thead>
+      <tbody>
+        ${[['검토대기','없는 서류','실무자가 봐야 함'],['승인','유효하면 인정','확인 완료'],
+           ['반려','없는 서류','다시 내세요'],['확인요청','없는 서류','발급기관 확인 대상']]
+          .map(([a,b,c])=>`<tr><td class="${td} font-medium">${a}</td>
+            <td class="${td}">${b}</td><td class="${td} text-ink-700">${c}</td></tr>`).join('')}
+      </tbody>
+    </table>`)}`;
+}
+</script>
+</body>
+</html>
