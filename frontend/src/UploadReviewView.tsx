@@ -39,20 +39,27 @@ export default function UploadReviewView() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [submissions, setSubmissions] = useState<Submission[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  const refresh = () => listSubmissions().then(setSubmissions).catch((e: unknown) => setError(e instanceof Error ? e.message : '목록을 불러오지 못했습니다'))
+  const refresh = () => listSubmissions().then((list) => {
+    setSubmissions(list)
+    setSelectedId((prev) => prev ?? list[0]?.id ?? null)
+  }).catch((e: unknown) => setError(e instanceof Error ? e.message : '목록을 불러오지 못했습니다'))
 
   useEffect(() => { refresh() }, [])
+
+  const selected = submissions.find((s) => s.id === selectedId) ?? null
 
   const handleUpload = async () => {
     if (!file) return
     setBusy(true)
     setError('')
     try {
-      await uploadSubmission(file, militaryNumber.trim() || undefined)
+      const created = await uploadSubmission(file, militaryNumber.trim() || undefined)
       setFile(null)
       setMilitaryNumber('')
       await refresh()
+      setSelectedId(created.id)
     } catch (e) {
       setError(e instanceof Error ? e.message : '업로드에 실패했습니다')
     } finally {
@@ -94,44 +101,63 @@ export default function UploadReviewView() {
             제출 및 AI 분석
           </button>
         </div>
-        <p className="mt-2 text-[12px] text-slate-400">제출하면 검토함에 대기 항목으로 추가됩니다.</p>
+        <p className="mt-2 text-[12px] text-slate-400">제출하면 검토함에 대기 항목으로 추가됩니다. (지금은 매번 새 PDF를 업로드하지만, 나중에는 이미 접수된 서류를 승인/반려만 하는 흐름으로 바뀔 예정입니다.)</p>
         {error && <p className="mt-2 text-[13px] text-rose-700">{error}</p>}
       </section>
 
-      <section className="rounded border border-slate-300 bg-white">
-        <div className="border-b border-slate-200 px-4 py-3 text-[13px] text-slate-500">
-          제출 이력 <b className="num text-slate-900">{submissions.length}</b>건
-        </div>
-        {submissions.length === 0 && <p className="p-4 text-[13px] text-slate-400">제출된 서류가 없습니다.</p>}
-        <div className="divide-y divide-slate-100">
+      <section className="flex h-[calc(100vh-320px)] min-h-[420px] overflow-hidden rounded border border-slate-300 bg-white">
+        <div className="w-[280px] shrink-0 overflow-y-auto border-r border-slate-300">
+          <div className="border-b border-slate-200 px-3.5 py-2.5 text-[12.5px] text-slate-500">
+            제출 목록 <b className="num text-slate-900">{submissions.length}</b>건
+          </div>
+          {submissions.length === 0 && <p className="p-4 text-[13px] text-slate-400">제출된 서류가 없습니다.</p>}
           {submissions.map((s) => (
-            <div key={s.id} className="px-4 py-3">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="font-medium">{s.filename}</span>
-                {s.military_number && <span className="num text-[12px] text-slate-500">{s.military_number}</span>}
-                <span className={`rounded px-1.5 py-0.5 text-[11.5px] font-semibold ${STATUS_STYLE[s.status]}`}>{STATUS_LABEL[s.status]}</span>
-                <a href={submissionFileUrl(s.saved_path)} target="_blank" rel="noopener noreferrer" className="text-[12.5px] text-emerald-800 hover:underline">
-                  원본 열기 ↗
-                </a>
-                <span className="num ml-auto text-[11.5px] text-slate-400">{new Date(s.created_at).toLocaleString()}</span>
+            <button key={s.id} onClick={() => setSelectedId(s.id)}
+                    className={`block w-full border-b border-slate-100 px-3.5 py-2.5 text-left ${
+                      selectedId === s.id ? 'bg-slate-50 border-l-2 border-l-emerald-800' : 'border-l-2 border-l-transparent hover:bg-slate-50'}`}>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[13.5px] font-semibold">{s.military_number ?? s.filename}</span>
+                <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[s.status]}`}>{STATUS_LABEL[s.status]}</span>
               </div>
-              <ExtractionSummary extraction={s.extraction} category={s.reason_category} />
-              {s.status === 'pending' && (
-                <div className="mt-3 flex gap-2">
-                  <button disabled={busy} onClick={() => handleDecision(s.id, 'approved')}
-                          className="rounded bg-emerald-800 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50">
-                    승인
-                  </button>
-                  <button disabled={busy} onClick={() => handleDecision(s.id, 'declined')}
-                          className="rounded border border-rose-700 px-3 py-1.5 text-[12.5px] font-semibold text-rose-700 disabled:opacity-50">
-                    반려
-                  </button>
-                </div>
-              )}
-            </div>
+              <div className="text-[12.5px] text-slate-500">{s.extraction.document_type || s.filename}</div>
+              <div className="num text-[11.5px] text-slate-400">제출 {new Date(s.created_at).toLocaleString()}</div>
+            </button>
           ))}
         </div>
+
+        <div className="flex flex-1 items-center justify-center bg-slate-100">
+          {selected ? (
+            <iframe title="서류 원본" src={submissionFileUrl(selected.saved_path)} className="h-full w-full bg-white" />
+          ) : (
+            <p className="p-10 text-center text-[13.5px] text-slate-400">왼쪽에서 제출 건을 선택하면 원본 PDF가 여기에 표시됩니다.</p>
+          )}
+        </div>
+
+        {selected && (
+          <aside className="w-[300px] shrink-0 overflow-y-auto border-l border-slate-300 p-4">
+            <dl className="mb-3 grid grid-cols-[60px_1fr] gap-y-1.5 text-[13px]">
+              <dt className="text-slate-500">군번</dt><dd className="num">{selected.military_number ?? '미기재'}</dd>
+              <dt className="text-slate-500">파일명</dt><dd>{selected.filename}</dd>
+            </dl>
+            <ExtractionSummary extraction={selected.extraction} category={selected.reason_category} />
+            {selected.status === 'pending' ? (
+              <div className="mt-4 flex gap-2">
+                <button disabled={busy} onClick={() => handleDecision(selected.id, 'approved')}
+                        className="rounded bg-emerald-800 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50">
+                  승인
+                </button>
+                <button disabled={busy} onClick={() => handleDecision(selected.id, 'declined')}
+                        className="rounded border border-rose-700 px-3 py-1.5 text-[12.5px] font-semibold text-rose-700 disabled:opacity-50">
+                  반려
+                </button>
+              </div>
+            ) : (
+              <p className="mt-4 text-[12.5px] text-slate-400">이미 {STATUS_LABEL[selected.status]} 처리됨</p>
+            )}
+          </aside>
+        )}
       </section>
     </div>
   )
 }
+
