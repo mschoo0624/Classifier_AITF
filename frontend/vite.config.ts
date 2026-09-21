@@ -14,6 +14,12 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      // classifier/API.py (PDF 업로드 → 추출/분류 → 승인/반려)
+      '/classifier-api': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/classifier-api/, ''),
+      },
     },
   },
 })

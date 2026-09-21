@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import {
   acceptDocument, fetchBootstrap, rejectDocument, verifyDocument,
   type Bootstrap, type Person, type QueueItem,
 } from './api'
+import {
+  decideSubmission, listSubmissions, submissionFileUrl,
+  type Submission,
+} from './classifierApi'
+import UploadReviewView, { ExtractionSummary } from './UploadReviewView'
 
 const CLASS_STYLE: Record<string, string> = {
   법규보류: 'text-emerald-800 border-emerald-800',
@@ -17,7 +23,7 @@ function ClassChip({ label }: { label: string }) {
   return <span className={`inline-block rounded border px-2 py-0.5 text-[12px] font-semibold ${cls}`}>{label}</span>
 }
 
-function Tabs({ tab, setTab, queueLeft }: { tab: 'roster' | 'inbox'; setTab: (t: 'roster' | 'inbox') => void; queueLeft: number }) {
+function Tabs({ tab, setTab, queueLeft }: { tab: 'roster' | 'inbox' | 'upload'; setTab: (t: 'roster' | 'inbox' | 'upload') => void; queueLeft: number }) {
   const base = 'px-3 py-1.5 text-[13.5px] border-b-2'
   return (
     <nav className="flex gap-1">
@@ -29,6 +35,10 @@ function Tabs({ tab, setTab, queueLeft }: { tab: 'roster' | 'inbox'; setTab: (t:
       <button className={`${base} ${tab === 'roster' ? 'border-emerald-800 text-slate-900 font-semibold' : 'border-transparent text-slate-500'}`}
               onClick={() => setTab('roster')}>
         명부
+      </button>
+      <button className={`${base} ${tab === 'upload' ? 'border-emerald-800 text-slate-900 font-semibold' : 'border-transparent text-slate-500'}`}
+              onClick={() => setTab('upload')}>
+        서류 업로드
       </button>
     </nav>
   )
@@ -291,10 +301,69 @@ function ReviewPanel({
   )
 }
 
-function InboxView({ queue, bootstrap }: { queue: QueueItem[]; bootstrap: Bootstrap }) {
+function SubmissionReviewPanel({ item, onDone }: { item: Submission; onDone: (label: string) => void }) {
+  const [busy, setBusy] = useState(false)
+
+  const decide = async (decision: 'approved' | 'declined') => {
+    setBusy(true)
+    try {
+      await decideSubmission(item.id, decision)
+      onDone(decision === 'approved' ? '승인' : '반려')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <aside className="w-[340px] shrink-0 overflow-y-auto border-l border-slate-300 bg-white p-4">
+      <dl className="mb-4 grid grid-cols-[60px_1fr] gap-y-1.5 text-[13px]">
+        <dt className="text-slate-500">군번</dt><dd className="num">{item.military_number ?? '미기재'}</dd>
+        <dt className="text-slate-500">파일명</dt><dd>{item.filename}</dd>
+      </dl>
+
+      <div className="mb-4 rounded border border-slate-200 bg-slate-50 p-3">
+        <ExtractionSummary extraction={item.extraction} category={item.reason_category} />
+      </div>
+
+      <a href={submissionFileUrl(item.saved_path)} target="_blank" rel="noopener noreferrer"
+         className="mb-4 block rounded border border-slate-300 px-3 py-2 text-center text-[13px] text-emerald-800 hover:bg-slate-50">
+        원본 서류 열기 ↗
+      </a>
+
+      <div className="flex flex-col gap-2">
+        <button disabled={busy} onClick={() => decide('approved')}
+                className="rounded bg-emerald-800 px-3 py-2 text-[13.5px] font-semibold text-white disabled:opacity-50">
+          승인
+        </button>
+        <button disabled={busy} onClick={() => decide('declined')}
+                className="rounded border border-rose-700 px-3 py-2 text-[13.5px] font-semibold text-rose-700 disabled:opacity-50">
+          반려
+        </button>
+      </div>
+    </aside>
+  )
+}
+
+function InboxView({
+  queue, bootstrap, submissions, setSubmissions,
+}: {
+  queue: QueueItem[]
+  bootstrap: Bootstrap
+  submissions: Submission[]
+  setSubmissions: Dispatch<SetStateAction<Submission[]>>
+}) {
   const [items, setItems] = useState(queue.map((q) => ({ ...q, done: null as null | string })))
-  const [selectedId, setSelectedId] = useState<string | null>(items[0]?.id ?? null)
-  const selected = items.find((i) => i.id === selectedId) ?? null
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (selectedId === null && (items[0] || submissions.some((s) => s.status === 'pending'))) {
+      setSelectedId(items[0]?.id ?? submissions.find((s) => s.status === 'pending')?.id ?? null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, submissions])
+
+  const selectedItem = items.find((i) => i.id === selectedId) ?? null
+  const selectedSubmission = submissions.find((s) => s.id === selectedId) ?? null
 
   const handleDone = (label: string, changed: boolean, message?: string) => {
     if (!selectedId) return
@@ -305,7 +374,14 @@ function InboxView({ queue, bootstrap }: { queue: QueueItem[]; bootstrap: Bootst
     void changed
   }
 
-  const left = items.filter((i) => !i.done).length
+  const handleSubmissionDone = (label: string) => {
+    setSubmissions((prev) => prev.map((s) => s.id === selectedId ? { ...s, status: label === '승인' ? 'approved' : 'declined' } : s))
+    const next = submissions.find((s) => s.id !== selectedId && s.status === 'pending')
+    setTimeout(() => setSelectedId(next?.id ?? null), 700)
+  }
+
+  const pendingSubmissions = submissions.filter((s) => s.status === 'pending')
+  const left = items.filter((i) => !i.done).length + pendingSubmissions.length
 
   return (
     <div className="flex h-[calc(100vh-180px)] min-h-[480px] overflow-hidden rounded border border-slate-300 bg-white">
@@ -313,7 +389,21 @@ function InboxView({ queue, bootstrap }: { queue: QueueItem[]; bootstrap: Bootst
         <div className="border-b border-slate-200 px-3.5 py-2.5 text-[12.5px] text-slate-500">
           검토 대기 <b className="num text-slate-900">{left}</b>건 · 제출 오래된 순
         </div>
-        {items.length === 0 && <p className="p-4 text-[13px] text-slate-400">대기 중인 서류가 없습니다.</p>}
+        {items.length === 0 && pendingSubmissions.length === 0 && <p className="p-4 text-[13px] text-slate-400">대기 중인 서류가 없습니다.</p>}
+        {submissions.map((s) => (
+          <button key={s.id} onClick={() => setSelectedId(s.id)}
+                  className={`block w-full border-b border-slate-100 px-3.5 py-2.5 text-left ${
+                    s.status !== 'pending' ? 'opacity-40' : ''} ${selectedId === s.id ? 'bg-slate-50 border-l-2 border-l-emerald-800' : 'border-l-2 border-l-transparent hover:bg-slate-50'}`}>
+            <div className="flex items-baseline gap-1.5">
+              <span className={`text-[13.5px] font-semibold ${s.status !== 'pending' ? 'line-through' : ''}`}>{s.military_number ?? s.filename}</span>
+              <span className="rounded bg-emerald-100 px-1 text-[10.5px] font-semibold text-emerald-800">AI 업로드</span>
+            </div>
+            <div className="text-[12.5px] text-slate-500">{s.extraction.document_type || s.filename}</div>
+            <div className="num text-[11.5px] text-slate-400">
+              제출 {new Date(s.created_at).toLocaleDateString()}{s.status !== 'pending' ? ` · ${s.status === 'approved' ? '승인' : '반려'}` : ''}
+            </div>
+          </button>
+        ))}
         {items.map((it) => (
           <button key={it.id} onClick={() => setSelectedId(it.id)}
                   className={`block w-full border-b border-slate-100 px-3.5 py-2.5 text-left ${
@@ -331,16 +421,20 @@ function InboxView({ queue, bootstrap }: { queue: QueueItem[]; bootstrap: Bootst
       </div>
 
       <div className="flex flex-1 items-center justify-center bg-slate-100">
-        {selected?.file_path ? (
-          <iframe title="서류 원본" src={selected.file_path} className="h-full w-full bg-white" />
+        {selectedSubmission ? (
+          <iframe title="서류 원본" src={submissionFileUrl(selectedSubmission.saved_path)} className="h-full w-full bg-white" />
+        ) : selectedItem?.file_path ? (
+          <iframe title="서류 원본" src={selectedItem.file_path} className="h-full w-full bg-white" />
         ) : (
           <p className="p-10 text-center text-[13.5px] text-slate-400">왼쪽에서 서류를 선택하세요.</p>
         )}
       </div>
 
-      {selected && (
-        <ReviewPanel key={selected.id} item={selected} reasons={bootstrap.reject_reasons} verifyReasons={bootstrap.verify_reasons} onDone={handleDone} />
-      )}
+      {selectedSubmission ? (
+        <SubmissionReviewPanel key={selectedSubmission.id} item={selectedSubmission} onDone={handleSubmissionDone} />
+      ) : selectedItem ? (
+        <ReviewPanel key={selectedItem.id} item={selectedItem} reasons={bootstrap.reject_reasons} verifyReasons={bootstrap.verify_reasons} onDone={handleDone} />
+      ) : null}
     </div>
   )
 }
@@ -348,12 +442,17 @@ function InboxView({ queue, bootstrap }: { queue: QueueItem[]; bootstrap: Bootst
 export default function App() {
   const [data, setData] = useState<Bootstrap | null>(null)
   const [error, setError] = useState('')
-  const [tab, setTab] = useState<'roster' | 'inbox'>('inbox')
+  const [tab, setTab] = useState<'roster' | 'inbox' | 'upload'>('inbox')
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null)
+  const [submissions, setSubmissions] = useState<Submission[]>([])
 
   useEffect(() => {
     fetchBootstrap().then(setData).catch((e: unknown) => setError(e instanceof Error ? e.message : '불러오지 못했습니다'))
   }, [])
+
+  useEffect(() => {
+    listSubmissions().then(setSubmissions).catch(() => undefined)
+  }, [tab])
 
   if (error) {
     return (
@@ -377,14 +476,14 @@ export default function App() {
             <h1 className="text-[16px] font-semibold">보류·연기 판정 시스템</h1>
           </div>
         </div>
-        <Tabs tab={tab} setTab={setTab} queueLeft={data.queue.length} />
+        <Tabs tab={tab} setTab={setTab} queueLeft={data.queue.length + submissions.filter((s) => s.status === 'pending').length} />
         <span className="num ml-auto text-[12.5px] text-slate-500">기준일 {data.as_of} · 훈련일 {data.training_date}</span>
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-6">
-        {tab === 'roster'
-          ? <RosterView people={data.people} onSelect={setSelectedPerson} />
-          : <InboxView queue={data.queue} bootstrap={data} />}
+        {tab === 'roster' && <RosterView people={data.people} onSelect={setSelectedPerson} />}
+        {tab === 'inbox' && <InboxView queue={data.queue} bootstrap={data} submissions={submissions} setSubmissions={setSubmissions} />}
+        {tab === 'upload' && <UploadReviewView />}
       </main>
 
       {selectedPerson && <PersonDetail person={selectedPerson} onClose={() => setSelectedPerson(null)} />}

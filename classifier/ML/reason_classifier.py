@@ -19,7 +19,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 
-import extraction
+try:
+    from . import extraction
+except ImportError:
+    import extraction
 
 REASON_EXAMPLES_PATH = Path(__file__).with_name("reason_examples.jsonl")
 MODEL_PATH = Path(__file__).with_name("reason_classifier.joblib")
